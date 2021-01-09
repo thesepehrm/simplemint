@@ -12,8 +12,6 @@ type KVStoreApplication struct {
 	currentBatch *badger.Txn
 }
 
-var _ abcitypes.Application = (*KVStoreApplication)(nil)
-
 func NewKVStoreApplication(db *badger.DB) *KVStoreApplication {
 	return &KVStoreApplication{
 		db: db,
@@ -47,7 +45,11 @@ func (app *KVStoreApplication) CheckTx(req abcitypes.RequestCheckTx) abcitypes.R
 }
 
 func (app *KVStoreApplication) Commit() abcitypes.ResponseCommit {
-	app.currentBatch.Commit()
+	err := app.currentBatch.Commit()
+	if err != nil {
+		panic(err)
+	}
+
 	return abcitypes.ResponseCommit{}
 }
 
