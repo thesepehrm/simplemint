@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+
 	"github.com/dgraph-io/badger"
 	abcitypes "github.com/tendermint/tendermint/abci/types"
 )
@@ -14,7 +16,7 @@ var _ abcitypes.Application = (*KVStoreApplication)(nil)
 
 func NewKVStoreApplication(db *badger.DB) *KVStoreApplication {
 	return &KVStoreApplication{
-		db: db
+		db: db,
 	}
 }
 
@@ -22,7 +24,20 @@ func (KVStoreApplication) Info(req abcitypes.RequestInfo) abcitypes.ResponseInfo
 	return abcitypes.ResponseInfo{}
 }
 
-func (KVStoreApplication) DeliverTx(req abcitypes.RequestDeliverTx) abcitypes.ResponseDeliverTx {
+func (app *KVStoreApplication) DeliverTx(req abcitypes.RequestDeliverTx) abcitypes.ResponseDeliverTx {
+	code := app.isValid(req.Tx)
+	if code != 0 {
+		return abcitypes.ResponseDeliverTx{Code: code}
+	}
+
+	parts := bytes.Split(req.Tx, []byte("="))
+	key, value := parts[0], parts[1]
+
+	err := app.currentBatch.Set(key, value)
+	if err != nil {
+		panic(err)
+	}
+
 	return abcitypes.ResponseDeliverTx{Code: 0}
 }
 
@@ -31,12 +46,33 @@ func (app *KVStoreApplication) CheckTx(req abcitypes.RequestCheckTx) abcitypes.R
 	return abcitypes.ResponseCheckTx{Code: code}
 }
 
-func (KVStoreApplication) Commit() abcitypes.ResponseCommit {
+func (app *KVStoreApplication) Commit() abcitypes.ResponseCommit {
+	app.currentBatch.Commit()
 	return abcitypes.ResponseCommit{}
 }
 
-func (KVStoreApplication) Query(req abcitypes.RequestQuery) abcitypes.ResponseQuery {
-	return abcitypes.ResponseQuery{Code: 0}
+func (app *KVStoreApplication) Query(req abcitypes.RequestQuery) (resQuery abcitypes.ResponseQuery) {
+	resQuery.Key = req.Data
+	err := app.db.View(func(txn *badger.Txn) error {
+		item, err := txn.Get(req.Data)
+		if err != nil && err != badger.ErrKeyNotFound {
+			return err
+		}
+		if err == badger.ErrKeyNotFound {
+			resQuery.Log = "does not exist"
+		} else {
+			return item.Value(func(val []byte) error {
+				resQuery.Log = "exists"
+				resQuery.Value = val
+				return nil
+			})
+		}
+		return nil
+	})
+	if err != nil {
+		panic(err)
+	}
+	return
 }
 
 func (KVStoreApplication) InitChain(req abcitypes.RequestInitChain) abcitypes.ResponseInitChain {
